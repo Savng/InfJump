@@ -1,4 +1,4 @@
--- // ULTIMATE HUB: RESTRUCTURED & FIXED //
+-- // ULTIMATE HUB: RESTRUCTURED & FIXED v2 //
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -7,17 +7,75 @@ local Lighting = game:GetService("Lighting")
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 
--- Безопасный поиск папки автомобилей
-local CarsFolder = workspace:FindFirstChild("Cars") or workspace:FindFirstChild("cars") or workspace
+-- Безопасный поиск папки автомобилей (через if, без or)
+local CarsFolder
+if workspace:FindFirstChild("Cars") then
+    CarsFolder = workspace:FindFirstChild("Cars")
+elseif workspace:FindFirstChild("cars") then
+    CarsFolder = workspace:FindFirstChild("cars")
+else
+    CarsFolder = workspace
+end
 
--- Дефолтные настройки освещения
+-- Сохраняем дефолтные настройки освещения для отката
 local defaultFogEnd = Lighting.FogEnd
 local defaultClockTime = Lighting.ClockTime
 local defaultAmbient = Lighting.Ambient
 
+local ESP = {}
+local Connections = {}
+local flying = false
+local noclipping = false
 local hijackActive = false
 local flySpeed = 90
-local hijackConnection, hijackVelocity, hijackGyro = nil, nil, nil
+local maxEspDistance = 1000
+
+local flyConnection, noclipConnection, hijackConnection = nil, nil, nil
+local hijackVelocity, hijackGyro = nil, nil
+
+-- ====================== ЭКРАН ЗАГРУЗКИ (LOADER) ======================
+local LoaderGui = Instance.new("ScreenGui")
+LoaderGui.Name = "HubLoader"
+LoaderGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local LoaderFrame = Instance.new("Frame")
+LoaderFrame.Size = UDim2.new(0, 300, 0, 150)
+LoaderFrame.Position = UDim2.new(0.5, -150, 0.5, -75)
+LoaderFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+LoaderFrame.BorderSizePixel = 0
+LoaderFrame.Parent = LoaderGui
+Instance.new("UICorner", LoaderFrame).CornerRadius = UDim.new(0, 8)
+
+local LoaderLabel = Instance.new("TextLabel")
+LoaderLabel.Size = UDim2.new(1, 0, 0, 50)
+LoaderLabel.Position = UDim2.new(0, 0, 0, 20)
+LoaderLabel.BackgroundTransparency = 1
+LoaderLabel.Text = "Initializing Ultimate Hub..."
+LoaderLabel.TextColor3 = Color3.fromRGB(0, 255, 180)
+LoaderLabel.TextSize = 16
+LoaderLabel.Font = Enum.Font.GothamBold
+LoaderLabel.Parent = LoaderFrame
+
+local ProgressBarBg = Instance.new("Frame")
+ProgressBarBg.Size = UDim2.new(0.8, 0, 0, 8)
+ProgressBarBg.Position = UDim2.new(0.1, 0, 0.6, 0)
+ProgressBarBg.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+ProgressBarBg.BorderSizePixel = 0
+ProgressBarBg.Parent = LoaderFrame
+Instance.new("UICorner", ProgressBarBg).CornerRadius = UDim.new(0, 4)
+
+local ProgressBar = Instance.new("Frame")
+ProgressBar.Size = UDim2.new(0, 0, 1, 0)
+ProgressBar.BackgroundColor3 = Color3.fromRGB(0, 255, 180)
+ProgressBar.BorderSizePixel = 0
+ProgressBar.Parent = ProgressBarBg
+Instance.new("UICorner", ProgressBar).CornerRadius = UDim.new(0, 4)
+
+-- Анимация загрузки
+local tweenLoad = TweenService:Create(ProgressBar, TweenInfo.new(2, Enum.EasingStyle.Poly, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 1, 0)})
+tweenLoad:Play()
+tweenLoad.Completed:Wait()
+LoaderGui:Destroy()
 
 -- ====================== ОСНОВНОЙ ИНТЕРФЕЙС ======================
 local ScreenGui = Instance.new("ScreenGui")
@@ -53,13 +111,11 @@ CloseBtn.TextSize = 26
 CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.Parent = TitleBar
 
--- Drag
+-- Перетаскивание (Drag)
 local dragging, dragStart, startPos
 TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = Frame.Position
+        dragging = true; dragStart = input.Position; startPos = Frame.Position
     end
 end)
 UserInputService.InputChanged:Connect(function(input)
@@ -89,7 +145,6 @@ RightContainer.ScrollBarThickness = 4
 RightContainer.Parent = Frame
 
 local leftY = 0
-
 local function AddButton(text, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0.95, 0, 0, 35)
@@ -111,7 +166,7 @@ local function AddSlider(container, text, min, max, default, callback)
     sliderFrame.Size = UDim2.new(0.95, 0, 0, 50)
     sliderFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 34)
     Instance.new("UICorner", sliderFrame).CornerRadius = UDim.new(0, 6)
-
+    
     local currentY = 0
     for _, child in pairs(container:GetChildren()) do
         if child:IsA("Frame") or child:IsA("TextButton") then
@@ -152,49 +207,57 @@ local function AddSlider(container, text, min, max, default, callback)
     bar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             updateSlider(input)
-            local moveCon = UserInputService.InputChanged:Connect(function(inp)
+            local moveCon, upCon
+            moveCon = UserInputService.InputChanged:Connect(function(inp)
                 if inp.UserInputType == Enum.UserInputType.MouseMovement then updateSlider(inp) end
             end)
-            local upCon = UserInputService.InputEnded:Connect(function(inp)
+            upCon = UserInputService.InputEnded:Connect(function(inp)
                 if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                    moveCon:Disconnect()
-                    upCon:Disconnect()
+                    moveCon:Disconnect(); upCon:Disconnect()
                 end
             end)
         end
     end)
-
+    
     if container == LeftContainer then leftY = leftY + 55 end
 end
 
--- ====================== HIJACK (ИСПРАВЛЕНО) ======================
+-- ====================== ЛОГИКА УПРАВЛЕНИЯ МАШИНОЙ ======================
 local function stopHijack()
     hijackActive = false
-    if hijackConnection then hijackConnection:Disconnect() end
-    if hijackVelocity then hijackVelocity:Destroy() end
-    if hijackGyro then hijackGyro:Destroy() end
+    if hijackConnection then hijackConnection:Disconnect(); hijackConnection = nil end
+    if hijackVelocity then hijackVelocity:Destroy(); hijackVelocity = nil end
+    if hijackGyro then hijackGyro:Destroy(); hijackGyro = nil end
 end
 
 local function startHijack()
     if hijackActive then stopHijack() end
-
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChild("Humanoid")
-    if not hum or not hum.SeatPart then
-        print("❌ Сядьте в машину!")
-        return
-    end
+    if not hum or not hum.SeatPart then return end
 
     local currentVehicle = hum.SeatPart.Parent
     while currentVehicle and currentVehicle.Parent ~= CarsFolder and currentVehicle.Parent ~= workspace do
         currentVehicle = currentVehicle.Parent
     end
 
-    local vehicleRoot = currentVehicle and (
-        currentVehicle:FindFirstChild("HumanoidRootPart") or 
-        currentVehicle.PrimaryPart or 
-        hum.SeatPart
-    )
+    -- Ищем корневую часть машины (без or)
+    local vehicleRoot
+    if currentVehicle then
+        local hrp = currentVehicle:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            vehicleRoot = hrp
+        else
+            local prim = currentVehicle:PrimaryPart
+            if prim then
+                vehicleRoot = prim
+            else
+                vehicleRoot = hum.SeatPart
+            end
+        end
+    else
+        vehicleRoot = hum.SeatPart
+    end
 
     if not vehicleRoot then return end
 
@@ -215,10 +278,8 @@ local function startHijack()
             stopHijack()
             return
         end
-
         local move = Vector3.new()
         local cam = Camera.CFrame
-
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + cam.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - cam.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - cam.RightVector end
@@ -233,7 +294,7 @@ local function startHijack()
     end)
 end
 
--- ====================== ПАНЕЛИ ======================
+-- ====================== ФУНКЦИИ ОКРУЖЕНИЯ (ПРАВАЯ ПАНЕЛЬ) ======================
 local rightTitle = Instance.new("TextLabel")
 rightTitle.Size = UDim2.new(1, 0, 0, 25)
 rightTitle.Position = UDim2.new(0, 0, 0, 0)
@@ -261,7 +322,7 @@ fogBtn.MouseButton1Click:Connect(function()
     if noFogActive then
         Lighting.FogEnd = 999999
         Lighting.Ambient = Color3.fromRGB(255, 255, 255)
-        fogBtn.Text = "Туман: Отключен"
+        fogBtn.Text = "Туман: Отключен (FullBright)"
     else
         Lighting.FogEnd = defaultFogEnd
         Lighting.Ambient = defaultAmbient
@@ -269,16 +330,24 @@ fogBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-AddSlider(RightContainer, "Время суток", 0, 23, math.floor(defaultClockTime), function(val)
+AddSlider(RightContainer, "Время суток (Погода)", 0, 23, math.floor(defaultClockTime), function(val)
     Lighting.ClockTime = val
 end)
 
--- Левая панель
-AddButton("🚗 Перехватить руль", function() startHijack() end)
-AddButton("⛔ Отпустить управление", function() stopHijack() end)
-AddSlider(LeftContainer, "Скорость ТС", 40, 250, 90, function(v) flySpeed = v end)
+-- ====================== КНОПКИ (ЛЕВАЯ ПАНЕЛЬ) ======================
+AddButton("Перехватить руль (В машине)", function()
+    startHijack()
+end)
 
--- Закрытие
+AddButton("Отпустить управление", function()
+    stopHijack()
+end)
+
+AddSlider(LeftContainer, "Скорость ТС", 40, 250, 90, function(v)
+    flySpeed = v
+end)
+
+-- ====================== ЗАКРЫТИЕ ХАБА ======================
 CloseBtn.MouseButton1Click:Connect(function()
     stopHijack()
     Lighting.FogEnd = defaultFogEnd
@@ -286,5 +355,3 @@ CloseBtn.MouseButton1Click:Connect(function()
     Lighting.Ambient = defaultAmbient
     ScreenGui:Destroy()
 end)
-
-print("Ultimate Hub v9 загружен успешно!")

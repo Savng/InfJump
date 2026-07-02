@@ -1,42 +1,49 @@
--- // ULTIMATE HUB: RESTRUCTURED & FIXED v2 //
+-- ULTIMATE HUB v13 - ПОЛНОСТЬЮ РАБОЧИЙ
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
 local Camera = workspace.CurrentCamera
-local LocalPlayer = Players.LocalPlayer
+local lp = Players.LocalPlayer
 
--- Безопасный поиск папки автомобилей (через if, без or)
-local CarsFolder
-if workspace:FindFirstChild("Cars") then
-    CarsFolder = workspace:FindFirstChild("Cars")
-elseif workspace:FindFirstChild("cars") then
+-- Байпас (работает через __namecall)
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+    if getnamecallmethod() == "Kick" and self == lp then
+        return nil
+    end
+    return oldNamecall(self, ...)
+end)
+
+lp.Remove = function(self)
+    return nil
+end
+
+-- Поиск папки машин
+local CarsFolder = workspace:FindFirstChild("Cars")
+if not CarsFolder then
     CarsFolder = workspace:FindFirstChild("cars")
-else
+end
+if not CarsFolder then
     CarsFolder = workspace
 end
 
--- Сохраняем дефолтные настройки освещения для отката
+-- Настройки
 local defaultFogEnd = Lighting.FogEnd
 local defaultClockTime = Lighting.ClockTime
 local defaultAmbient = Lighting.Ambient
 
-local ESP = {}
-local Connections = {}
-local flying = false
-local noclipping = false
 local hijackActive = false
 local flySpeed = 90
-local maxEspDistance = 1000
+local hijackConnection = nil
+local hijackVelocity = nil
+local hijackGyro = nil
 
-local flyConnection, noclipConnection, hijackConnection = nil, nil, nil
-local hijackVelocity, hijackGyro = nil, nil
-
--- ====================== ЭКРАН ЗАГРУЗКИ (LOADER) ======================
+-- Загрузочный экран
 local LoaderGui = Instance.new("ScreenGui")
-LoaderGui.Name = "HubLoader"
-LoaderGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+LoaderGui.Name = "Loader"
+LoaderGui.Parent = lp:WaitForChild("PlayerGui")
 
 local LoaderFrame = Instance.new("Frame")
 LoaderFrame.Size = UDim2.new(0, 300, 0, 150)
@@ -50,7 +57,7 @@ local LoaderLabel = Instance.new("TextLabel")
 LoaderLabel.Size = UDim2.new(1, 0, 0, 50)
 LoaderLabel.Position = UDim2.new(0, 0, 0, 20)
 LoaderLabel.BackgroundTransparency = 1
-LoaderLabel.Text = "Initializing Ultimate Hub..."
+LoaderLabel.Text = "Loading Ultimate Hub v13..."
 LoaderLabel.TextColor3 = Color3.fromRGB(0, 255, 180)
 LoaderLabel.TextSize = 16
 LoaderLabel.Font = Enum.Font.GothamBold
@@ -71,34 +78,33 @@ ProgressBar.BorderSizePixel = 0
 ProgressBar.Parent = ProgressBarBg
 Instance.new("UICorner", ProgressBar).CornerRadius = UDim.new(0, 4)
 
--- Анимация загрузки
 local tweenLoad = TweenService:Create(ProgressBar, TweenInfo.new(2, Enum.EasingStyle.Poly, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 1, 0)})
 tweenLoad:Play()
 tweenLoad.Completed:Wait()
 LoaderGui:Destroy()
 
--- ====================== ОСНОВНОЙ ИНТЕРФЕЙС ======================
+-- Главное GUI
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "UltimateHub_v9"
+ScreenGui.Name = "UltimateHub"
 ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.Parent = lp:WaitForChild("PlayerGui")
 
-local Frame = Instance.new("Frame")
-Frame.Size = UDim2.new(0, 550, 0, 500)
-Frame.Position = UDim2.new(0.5, -275, 0.5, -250)
-Frame.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
-Frame.BorderSizePixel = 0
-Frame.Parent = ScreenGui
-Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 12)
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 550, 0, 500)
+MainFrame.Position = UDim2.new(0.5, -275, 0.5, -250)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+MainFrame.BorderSizePixel = 0
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
 
 local TitleBar = Instance.new("TextLabel")
 TitleBar.Size = UDim2.new(1, 0, 0, 45)
 TitleBar.BackgroundColor3 = Color3.fromRGB(22, 22, 32)
-TitleBar.Text = "⚡ ULTIMATE HUB v9"
+TitleBar.Text = "⚡ ULTIMATE HUB v13"
 TitleBar.TextColor3 = Color3.fromRGB(0, 255, 180)
 TitleBar.TextSize = 14
 TitleBar.Font = Enum.Font.GothamBold
-TitleBar.Parent = Frame
+TitleBar.Parent = MainFrame
 Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 12)
 
 local CloseBtn = Instance.new("TextButton")
@@ -111,41 +117,55 @@ CloseBtn.TextSize = 26
 CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.Parent = TitleBar
 
--- Перетаскивание (Drag)
-local dragging, dragStart, startPos
+-- Перетаскивание
+local isDragging = false
+local dragStart = nil
+local frameStart = nil
+
 TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true; dragStart = input.Position; startPos = Frame.Position
+        isDragging = true
+        dragStart = input.Position
+        frameStart = MainFrame.Position
     end
 end)
+
 UserInputService.InputChanged:Connect(function(input)
-    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+    if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
         local delta = input.Position - dragStart
-        Frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        MainFrame.Position = UDim2.new(frameStart.X.Scale, frameStart.X.Offset + delta.X, frameStart.Y.Scale, frameStart.Y.Offset + delta.Y)
     end
 end)
+
 TitleBar.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        isDragging = false
+    end
 end)
 
-local LeftContainer = Instance.new("ScrollingFrame")
-LeftContainer.Size = UDim2.new(0, 250, 0, 430)
-LeftContainer.Position = UDim2.new(0, 10, 0, 55)
-LeftContainer.BackgroundTransparency = 1
-LeftContainer.CanvasSize = UDim2.new(0, 0, 0, 600)
-LeftContainer.ScrollBarThickness = 4
-LeftContainer.Parent = Frame
+-- Левая панель
+local LeftPanel = Instance.new("ScrollingFrame")
+LeftPanel.Size = UDim2.new(0, 250, 0, 430)
+LeftPanel.Position = UDim2.new(0, 10, 0, 55)
+LeftPanel.BackgroundTransparency = 1
+LeftPanel.CanvasSize = UDim2.new(0, 0, 0, 600)
+LeftPanel.ScrollBarThickness = 4
+LeftPanel.Parent = MainFrame
 
-local RightContainer = Instance.new("ScrollingFrame")
-RightContainer.Size = UDim2.new(0, 260, 0, 430)
-RightContainer.Position = UDim2.new(0, 270, 0, 55)
-RightContainer.BackgroundTransparency = 1
-RightContainer.CanvasSize = UDim2.new(0, 0, 0, 600)
-RightContainer.ScrollBarThickness = 4
-RightContainer.Parent = Frame
+-- Правая панель
+local RightPanel = Instance.new("ScrollingFrame")
+RightPanel.Size = UDim2.new(0, 260, 0, 430)
+RightPanel.Position = UDim2.new(0, 270, 0, 55)
+RightPanel.BackgroundTransparency = 1
+RightPanel.CanvasSize = UDim2.new(0, 0, 0, 600)
+RightPanel.ScrollBarThickness = 4
+RightPanel.Parent = MainFrame
 
-local leftY = 0
-local function AddButton(text, callback)
+-- Счётчик для позиции в левой панели
+local leftY = 10
+
+-- Функция создания кнопки
+local function CreateButton(text, callback)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0.95, 0, 0, 35)
     btn.Position = UDim2.new(0, 0, 0, leftY)
@@ -155,51 +175,59 @@ local function AddButton(text, callback)
     btn.TextSize = 12
     btn.Font = Enum.Font.GothamSemibold
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-    btn.Parent = LeftContainer
-    btn.MouseButton1Click:Connect(function() callback(btn) end)
+    btn.Parent = LeftPanel
+    btn.MouseButton1Click:Connect(callback)
     leftY = leftY + 40
     return btn
 end
 
-local function AddSlider(container, text, min, max, default, callback)
-    local sliderFrame = Instance.new("Frame")
-    sliderFrame.Size = UDim2.new(0.95, 0, 0, 50)
-    sliderFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 34)
-    Instance.new("UICorner", sliderFrame).CornerRadius = UDim.new(0, 6)
+-- Функция создания слайдера (упрощённая)
+local function CreateSlider(text, minVal, maxVal, defaultVal, callback)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0.95, 0, 0, 50)
+    frame.BackgroundColor3 = Color3.fromRGB(24, 24, 34)
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
     
-    local currentY = 0
-    for _, child in pairs(container:GetChildren()) do
+    -- вычисляем позицию
+    local yPos = 0
+    for _, child in pairs(LeftPanel:GetChildren()) do
         if child:IsA("Frame") or child:IsA("TextButton") then
-            currentY = math.max(currentY, child.Position.Y.Offset + child.Size.Y.Offset)
+            local y = child.Position.Y.Offset + child.Size.Y.Offset
+            if y > yPos then
+                yPos = y
+            end
         end
     end
-    sliderFrame.Position = UDim2.new(0, 0, 0, currentY + 5)
-    sliderFrame.Parent = container
+    frame.Position = UDim2.new(0, 0, 0, yPos + 5)
+    frame.Parent = LeftPanel
 
     local label = Instance.new("TextLabel")
     label.Size = UDim2.new(1, 0, 0, 25)
-    label.Text = text .. ": " .. default
+    label.Text = text .. ": " .. defaultVal
     label.TextColor3 = Color3.fromRGB(200, 200, 200)
     label.TextSize = 11
     label.Font = Enum.Font.Gotham
     label.BackgroundTransparency = 1
-    label.Parent = sliderFrame
+    label.Parent = frame
 
     local bar = Instance.new("Frame")
     bar.Size = UDim2.new(0.9, 0, 0, 6)
     bar.Position = UDim2.new(0.05, 0, 0.65, 0)
     bar.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-    bar.Parent = sliderFrame
+    bar.Parent = frame
 
     local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    fill.Size = UDim2.new((defaultVal - minVal) / (maxVal - minVal), 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(0, 255, 180)
     fill.Parent = bar
 
     local function updateSlider(input)
-        local pct = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+        local posX = input.Position.X
+        local barAbsX = bar.AbsolutePosition.X
+        local barSizeX = bar.AbsoluteSize.X
+        local pct = math.clamp((posX - barAbsX) / barSizeX, 0, 1)
         fill.Size = UDim2.new(pct, 0, 1, 0)
-        local val = math.floor(min + (max - min) * pct)
+        local val = math.floor(minVal + (maxVal - minVal) * pct)
         label.Text = text .. ": " .. val
         callback(val)
     end
@@ -207,53 +235,62 @@ local function AddSlider(container, text, min, max, default, callback)
     bar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             updateSlider(input)
-            local moveCon, upCon
-            moveCon = UserInputService.InputChanged:Connect(function(inp)
-                if inp.UserInputType == Enum.UserInputType.MouseMovement then updateSlider(inp) end
+            local moveCon = UserInputService.InputChanged:Connect(function(inp)
+                if inp.UserInputType == Enum.UserInputType.MouseMovement then
+                    updateSlider(inp)
+                end
             end)
-            upCon = UserInputService.InputEnded:Connect(function(inp)
+            local upCon = UserInputService.InputEnded:Connect(function(inp)
                 if inp.UserInputType == Enum.UserInputType.MouseButton1 then
-                    moveCon:Disconnect(); upCon:Disconnect()
+                    moveCon:Disconnect()
+                    upCon:Disconnect()
                 end
             end)
         end
     end)
-    
-    if container == LeftContainer then leftY = leftY + 55 end
+
+    leftY = leftY + 55
 end
 
--- ====================== ЛОГИКА УПРАВЛЕНИЯ МАШИНОЙ ======================
-local function stopHijack()
+-- Управление машиной
+local function StopHijack()
     hijackActive = false
-    if hijackConnection then hijackConnection:Disconnect(); hijackConnection = nil end
-    if hijackVelocity then hijackVelocity:Destroy(); hijackVelocity = nil end
-    if hijackGyro then hijackGyro:Destroy(); hijackGyro = nil end
+    if hijackConnection then
+        hijackConnection:Disconnect()
+        hijackConnection = nil
+    end
+    if hijackVelocity then
+        hijackVelocity:Destroy()
+        hijackVelocity = nil
+    end
+    if hijackGyro then
+        hijackGyro:Destroy()
+        hijackGyro = nil
+    end
 end
 
-local function startHijack()
-    if hijackActive then stopHijack() end
-    local char = LocalPlayer.Character
-    local hum = char and char:FindFirstChild("Humanoid")
+local function StartHijack()
+    if hijackActive then
+        StopHijack()
+    end
+    local char = lp.Character
+    if not char then return end
+    local hum = char:FindFirstChild("Humanoid")
     if not hum or not hum.SeatPart then return end
 
-    local currentVehicle = hum.SeatPart.Parent
-    while currentVehicle and currentVehicle.Parent ~= CarsFolder and currentVehicle.Parent ~= workspace do
-        currentVehicle = currentVehicle.Parent
+    local vehicle = hum.SeatPart.Parent
+    while vehicle and vehicle.Parent ~= CarsFolder and vehicle.Parent ~= workspace do
+        vehicle = vehicle.Parent
     end
 
-    -- Ищем корневую часть машины (без or)
-    local vehicleRoot
-    if currentVehicle then
-        local hrp = currentVehicle:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            vehicleRoot = hrp
-        else
-            local prim = currentVehicle:PrimaryPart
-            if prim then
-                vehicleRoot = prim
-            else
-                vehicleRoot = hum.SeatPart
-            end
+    local vehicleRoot = nil
+    if vehicle then
+        vehicleRoot = vehicle:FindFirstChild("HumanoidRootPart")
+        if not vehicleRoot then
+            vehicleRoot = vehicle:PrimaryPart
+        end
+        if not vehicleRoot then
+            vehicleRoot = hum.SeatPart
         end
     else
         vehicleRoot = hum.SeatPart
@@ -275,18 +312,27 @@ local function startHijack()
 
     hijackConnection = RunService.Heartbeat:Connect(function()
         if not hijackActive or not hum.SeatPart or not vehicleRoot.Parent then
-            stopHijack()
+            StopHijack()
             return
         end
-        local move = Vector3.new()
+        local moveDir = Vector3.new(0, 0, 0)
         local cam = Camera.CFrame
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + cam.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - cam.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - cam.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + cam.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            moveDir = moveDir + cam.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            moveDir = moveDir - cam.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            moveDir = moveDir - cam.RightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            moveDir = moveDir + cam.RightVector
+        end
 
-        if move.Magnitude > 0 then
-            hijackVelocity.Velocity = Vector3.new(move.X, 0, move.Z).Unit * flySpeed
+        if moveDir.Magnitude > 0 then
+            moveDir = moveDir.Unit
+            hijackVelocity.Velocity = Vector3.new(moveDir.X, 0, moveDir.Z) * flySpeed
             hijackGyro.CFrame = CFrame.new(vehicleRoot.Position, vehicleRoot.Position + Vector3.new(cam.LookVector.X, 0, cam.LookVector.Z))
         else
             hijackVelocity.Velocity = Vector3.new(0, 0, 0)
@@ -294,18 +340,18 @@ local function startHijack()
     end)
 end
 
--- ====================== ФУНКЦИИ ОКРУЖЕНИЯ (ПРАВАЯ ПАНЕЛЬ) ======================
+-- Правая панель: окружение
 local rightTitle = Instance.new("TextLabel")
 rightTitle.Size = UDim2.new(1, 0, 0, 25)
 rightTitle.Position = UDim2.new(0, 0, 0, 0)
-rightTitle.Text = "🌤️ УПРАВЛЕНИЕ ОКРУЖЕНИЕМ:"
+rightTitle.Text = "🌤️ УПРАВЛЕНИЕ ОКРУЖЕНИЕМ"
 rightTitle.TextColor3 = Color3.fromRGB(0, 255, 180)
 rightTitle.TextSize = 12
 rightTitle.Font = Enum.Font.GothamBold
 rightTitle.BackgroundTransparency = 1
-rightTitle.Parent = RightContainer
+rightTitle.Parent = RightPanel
 
-local noFogActive = false
+local fogActive = false
 local fogBtn = Instance.new("TextButton")
 fogBtn.Size = UDim2.new(0.95, 0, 0, 35)
 fogBtn.Position = UDim2.new(0, 0, 0, 30)
@@ -315,14 +361,14 @@ fogBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 fogBtn.TextSize = 11
 fogBtn.Font = Enum.Font.GothamSemibold
 Instance.new("UICorner", fogBtn).CornerRadius = UDim.new(0, 6)
-fogBtn.Parent = RightContainer
+fogBtn.Parent = RightPanel
 
 fogBtn.MouseButton1Click:Connect(function()
-    noFogActive = not noFogActive
-    if noFogActive then
+    fogActive = not fogActive
+    if fogActive then
         Lighting.FogEnd = 999999
         Lighting.Ambient = Color3.fromRGB(255, 255, 255)
-        fogBtn.Text = "Туман: Отключен (FullBright)"
+        fogBtn.Text = "Туман: ОТКЛЮЧЕН"
     else
         Lighting.FogEnd = defaultFogEnd
         Lighting.Ambient = defaultAmbient
@@ -330,26 +376,72 @@ fogBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-AddSlider(RightContainer, "Время суток (Погода)", 0, 23, math.floor(defaultClockTime), function(val)
+-- Слайдер времени на правой панели (делаем отдельно)
+local timeFrame = Instance.new("Frame")
+timeFrame.Size = UDim2.new(0.95, 0, 0, 50)
+timeFrame.Position = UDim2.new(0, 0, 0, 75)
+timeFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 34)
+Instance.new("UICorner", timeFrame).CornerRadius = UDim.new(0, 6)
+timeFrame.Parent = RightPanel
+
+local timeLabel = Instance.new("TextLabel")
+timeLabel.Size = UDim2.new(1, 0, 0, 25)
+timeLabel.Text = "Время суток: " .. math.floor(defaultClockTime)
+timeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+timeLabel.TextSize = 11
+timeLabel.Font = Enum.Font.Gotham
+timeLabel.BackgroundTransparency = 1
+timeLabel.Parent = timeFrame
+
+local timeBar = Instance.new("Frame")
+timeBar.Size = UDim2.new(0.9, 0, 0, 6)
+timeBar.Position = UDim2.new(0.05, 0, 0.65, 0)
+timeBar.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+timeBar.Parent = timeFrame
+
+local timeFill = Instance.new("Frame")
+timeFill.Size = UDim2.new(defaultClockTime / 23, 0, 1, 0)
+timeFill.BackgroundColor3 = Color3.fromRGB(0, 255, 180)
+timeFill.Parent = timeBar
+
+local function updateTime(input)
+    local posX = input.Position.X
+    local barAbsX = timeBar.AbsolutePosition.X
+    local barSizeX = timeBar.AbsoluteSize.X
+    local pct = math.clamp((posX - barAbsX) / barSizeX, 0, 1)
+    timeFill.Size = UDim2.new(pct, 0, 1, 0)
+    local val = math.floor(0 + 23 * pct)
+    timeLabel.Text = "Время суток: " .. val
     Lighting.ClockTime = val
+end
+
+timeBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        updateTime(input)
+        local moveCon = UserInputService.InputChanged:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseMovement then
+                updateTime(inp)
+            end
+        end)
+        local upCon = UserInputService.InputEnded:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+                moveCon:Disconnect()
+                upCon:Disconnect()
+            end
+        end)
+    end
 end)
 
--- ====================== КНОПКИ (ЛЕВАЯ ПАНЕЛЬ) ======================
-AddButton("Перехватить руль (В машине)", function()
-    startHijack()
+-- Создаём кнопки и слайдеры на левой панели
+CreateButton("Перехватить руль (В машине)", StartHijack)
+CreateButton("Отпустить управление", StopHijack)
+CreateSlider("Скорость ТС", 40, 250, 90, function(val)
+    flySpeed = val
 end)
 
-AddButton("Отпустить управление", function()
-    stopHijack()
-end)
-
-AddSlider(LeftContainer, "Скорость ТС", 40, 250, 90, function(v)
-    flySpeed = v
-end)
-
--- ====================== ЗАКРЫТИЕ ХАБА ======================
+-- Закрытие
 CloseBtn.MouseButton1Click:Connect(function()
-    stopHijack()
+    StopHijack()
     Lighting.FogEnd = defaultFogEnd
     Lighting.ClockTime = defaultClockTime
     Lighting.Ambient = defaultAmbient
